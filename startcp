@@ -1,0 +1,77 @@
+
+import os
+from transformers import pipeline, logging
+import numpy as np
+import pickle
+from langchain_community.document_loaders import PyPDFLoader
+from sklearn.metrics.pairwise import cosine_similarity
+
+# Suppress warnings from transformers library
+logging.set_verbosity_error()
+
+# Load SentenceTransformer model
+def load_sentence_transformer_model():
+    with open("sentence_transformer_model.pkl", "rb") as f:
+        return pickle.load(f)
+
+# Preprocess PDF content to split into individual FAQs
+def preprocess_documents(documents):
+    faqs = []
+    for doc in documents:
+        content = doc.page_content
+        # Split content by FAQ pattern (e.g., Q1:, A1:, Q2:, A2:, etc.)
+        faqs.extend(content.split('\nQ'))
+    return faqs
+
+# Extract the answer part from the FAQ content
+def extract_answer(faq_content):
+    parts = faq_content.split('\nA')
+    if len(parts) > 1:
+        return 'A' + parts[1]
+    return faq_content
+
+# Search for the closest FAQ using cosine similarity
+def search_faq_cosine(query, model, faqs):
+    query_embedding = model.encode([query])
+    faq_embeddings = [model.encode([faq])[0] for faq in faqs]  # Flatten the embeddings
+    similarities = cosine_similarity(query_embedding, faq_embeddings)
+    most_similar_index = np.argmax(similarities)
+    return most_similar_index
+
+# Generate a response using GPT-Neo
+def generate_response(faq_answer, user_query):
+    generator = pipeline('text-generation', model='distilgpt2')
+    prompt = f"FAQ Answer: {faq_answer}\nUser Question: {user_query}\n"
+    generated = generator(prompt, max_new_tokens=50, do_sample=True)  # Use max_new_tokens
+    return generated[0]['generated_text']
+
+if __name__ == "__main__":
+    # Load the SentenceTransformer model
+    model = load_sentence_transformer_model()
+
+    # Load your documents (same as in process_pdf.py)
+    documents = PyPDFLoader(r'C:\Users\dhtan\OneDrive\Desktop\CHATBOT\faq.pdf').load()
+
+    # Preprocess documents to split into individual FAQs
+    faqs = preprocess_documents(documents)
+
+    # Take user query as input
+    user_query = input("Enter your question: ")
+
+    # Search for the most similar FAQ using cosine similarity
+    most_similar_index = search_faq_cosine(user_query, model, faqs)
+
+    # Display the top result
+    if most_similar_index < len(faqs):
+        print(f"Result: Document Index {most_similar_index}")
+        faq_content = faqs[most_similar_index]
+        print(f"Document Content: {faq_content}")
+
+        # Extract the answer part from the FAQ content
+        faq_answer = extract_answer(faq_content)
+
+        # Generate a response using the retrieved FAQ and the user query
+        response = generate_response(faq_answer, user_query)
+        print("Response:\n", response)
+    else:
+        print(f"Error: Document index {most_similar_index} is out of range.")
